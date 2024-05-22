@@ -19,29 +19,25 @@ import java.util.Optional;
 public class BookingService {
 
     private static final LocalTime CANCEL_CUTOFF_TIME = LocalTime.of(22, 0);
+    private static final LocalTime CUTOFF_TIME = LocalTime.of(20, 0); // 8 PM cutoff
+    private static final int BOOKING_PERIOD_MONTHS = 3;
+
     @Autowired
     private BookingRepository bookingRepository;
 
-    private static final LocalTime CUTOFF_TIME = LocalTime.of(20, 0); // 8 PM cutoff
-    private static final int BOOKING_PERIOD_MONTHS = 3;
     public ResponseEntity<String> quickBookMeal(String userId, MealType mealType) {
-
         if (!isBookingBeforeCutoffTime()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Quick Booking should be made before 8 PM");
         }
 
-
         LocalDate tomorrow = LocalDate.now().plusDays(1);
-
 
         if (isWeekend(tomorrow)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Quick booking cannot be done for weekends.");
         }
 
-
         return processSingleBooking(userId, mealType, tomorrow);
     }
-
 
     public ResponseEntity<String> bookMeal(Map<String, Object> bookingDetails) {
         try {
@@ -59,23 +55,16 @@ public class BookingService {
             LocalDate startDate = LocalDate.parse(startDateStr);
             LocalDate endDate = bookingType.equalsIgnoreCase("bulk") ? LocalDate.parse(endDateStr) : startDate;
 
-
             if (!isBookingBeforeCutoffTime()) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Booking cannot be made after 8 PM.");
             }
 
-            System.out.println("Start Date: " + startDate);
-            System.out.println("End Date: " + endDate);
-
             if (isDateInvalid(startDate) || (bookingType.equalsIgnoreCase("bulk") && isDateInvalid(endDate))) {
-                System.out.println("Date Invalid Check Failed");
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid booking date.");
             }
 
             LocalDate tomorrow = LocalDate.now().plusDays(1);
             LocalDate maxBookingDate = tomorrow.plusMonths(BOOKING_PERIOD_MONTHS);
-
-            System.out.println("Max Booking Date: " + maxBookingDate);
 
             if (!isDateWithinRange(startDate, tomorrow, maxBookingDate) ||
                     (bookingType.equalsIgnoreCase("bulk") && !isDateWithinRange(endDate, tomorrow, maxBookingDate))) {
@@ -89,10 +78,6 @@ public class BookingService {
             } else {
                 return ResponseEntity.badRequest().body("Invalid booking type: " + bookingType);
             }
-        } catch (DateTimeParseException e) {
-            return ResponseEntity.badRequest().body("Invalid date format");
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body("Invalid meal type: " + e.getMessage());
         } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An error occurred");
@@ -104,22 +89,16 @@ public class BookingService {
     }
 
     private boolean isDateInvalid(LocalDate date) {
-        boolean result = date.isBefore(LocalDate.now().plusDays(1)) || isWeekend(date);
-        System.out.println("isDateInvalid: " + result);
-        return result;
+        return date.isBefore(LocalDate.now().plusDays(1)) || isWeekend(date);
     }
 
     private boolean isDateWithinRange(LocalDate date, LocalDate minDate, LocalDate maxDate) {
-        boolean result = !date.isBefore(minDate) && !date.isAfter(maxDate);
-        System.out.println("isDateWithinRange: " + result);
-        return result;
+        return !date.isBefore(minDate) && !date.isAfter(maxDate);
     }
 
     private boolean isWeekend(LocalDate date) {
         DayOfWeek day = date.getDayOfWeek();
-        boolean result = day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
-        System.out.println("isWeekend: " + result);
-        return result;
+        return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
     }
 
     private String extractUserId(Object userIdObj) {
@@ -140,21 +119,47 @@ public class BookingService {
         bookingRepository.save(booking);
         return ResponseEntity.ok("Meal booked for " + date + ".");
     }
-
     private ResponseEntity<String> processBulkBooking(String userId, LocalDate endDate, MealType mealType, LocalDate startDate) {
+        // Check if the start date is before the end date
+        if (startDate.isAfter(endDate)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Start date cannot be after end date.");
+        }
+
         LocalDate date = startDate;
+        List<Booking> bookings = new ArrayList<>();
+        int validDateCount = 0; // Counter for valid dates (excluding weekends)
+
         while (!date.isAfter(endDate)) {
-            if (isDateInvalid(date) || hasBookingForDate(date, userId)) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid booking date or user already has a booking for one of the dates in the range.");
+            if (isWeekend(date)) {
+                date = date.plusDays(1); // Skip weekends
+                continue;
             }
-            if (!isWeekend(date)) { // Skip weekends
-                Booking booking = createBooking(userId, mealType, date);
-                bookingRepository.save(booking);
+
+            // Check if the date is invalid (before the current date)
+            if (isDateInvalid(date)) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid booking date: " + date);
             }
+
+            // Check if the user already has a booking for the date
+            if (hasBookingForDate(date, userId)) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("User already has a booking for date: " + date);
+            }
+
+            validDateCount++; // Increment the valid date count
+            Booking booking = createBooking(userId, mealType, date);
+            bookings.add(booking);
             date = date.plusDays(1);
         }
-        return ResponseEntity.ok("Meals booked from " + startDate + " to " + endDate + ".");
+
+        // Adjust the end date to account for skipped weekends
+        LocalDate adjustedEndDate = startDate.plusDays(validDateCount+1);
+
+        // Save the bookings to the repository
+        bookingRepository.saveAll(bookings);
+
+        return ResponseEntity.ok("Meals booked from " + startDate + " to " + adjustedEndDate + ".");
     }
+
 
 
     private Booking createBooking(String userId, MealType mealType, LocalDate date) {
@@ -165,7 +170,6 @@ public class BookingService {
         booking.setMealType(mealType);
         return booking;
     }
-
 
 
    public ResponseEntity<String> cancelBookings(List<Long> bookingIds) {
