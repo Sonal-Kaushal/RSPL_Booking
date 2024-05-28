@@ -1,45 +1,46 @@
 package com.rspl.meal.Booking.Entites;
 
+import com.rspl.meal.Booking.enums.BookingStatus;
+import com.rspl.meal.Booking.enums.MealType;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
 
 import java.time.LocalDate;
 
+@Data
 @Entity
-@Getter
-@Setter
-@AllArgsConstructor
-@Table(name = "booking")
 public class Booking {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "booking_id")
+    private Long bookingId;
 
-
-    @Column(name = "start_date")
-    private LocalDate  startDate;
-
-    @Column(name = "end_date")
+    private String userId;
+    private MealType mealType;
+    private LocalDate startDate;
     private LocalDate endDate;
 
-    @Column(name = "user_id")
-    private String UserId;
+    @Enumerated(EnumType.STRING)
+    private BookingStatus status;
 
-//    @Enumerated(EnumType.STRING)
-    @Column(name = "meal_type")
-    private MealType mealType;
+    @OneToOne(mappedBy = "booking", cascade = CascadeType.ALL)
+    private Coupon coupon;
 
-    public Booking() {}
+    public Long getBookingId() {
+        return bookingId;
+    }
 
-    public Booking(LocalDate endDate, Long id, MealType mealType, LocalDate startDate, String userId) {
-        this.endDate = endDate;
-        this.id = id;
-        this.mealType = mealType;
-        this.startDate = startDate;
-        UserId = userId;
+    public void setBookingId(Long bookingId) {
+        this.bookingId = bookingId;
+    }
+
+    public Coupon getCoupon() {
+        return coupon;
+    }
+
+    public void setCoupon(Coupon coupon) {
+        this.coupon = coupon;
     }
 
     public LocalDate getEndDate() {
@@ -48,14 +49,6 @@ public class Booking {
 
     public void setEndDate(LocalDate endDate) {
         this.endDate = endDate;
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
     }
 
     public MealType getMealType() {
@@ -74,13 +67,30 @@ public class Booking {
         this.startDate = startDate;
     }
 
+    public BookingStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(BookingStatus status) {
+        this.status = status;
+    }
+
     public String getUserId() {
-        return UserId;
+        return userId;
     }
 
     public void setUserId(String userId) {
-        UserId = userId;
+        this.userId = userId;
     }
 
-
+    public Booking(){}
+    public Booking(Long bookingId, Coupon coupon, LocalDate endDate, MealType mealType, LocalDate startDate, BookingStatus status, String userId) {
+        this.bookingId = bookingId;
+        this.coupon = coupon;
+        this.endDate = endDate;
+        this.mealType = mealType;
+        this.startDate = startDate;
+        this.status = status;
+        this.userId = userId;
+    }
 }

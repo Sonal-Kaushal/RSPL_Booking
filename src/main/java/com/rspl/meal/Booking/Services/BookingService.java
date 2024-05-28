@@ -1,47 +1,76 @@
 package com.rspl.meal.Booking.Services;
 
-import com.rspl.meal.Booking.Entites.MealType;
 import com.rspl.meal.Booking.Entites.Booking;
+import com.rspl.meal.Booking.enums.MealType;
+import com.rspl.meal.Booking.enums.BookingStatus;
 import com.rspl.meal.Booking.Repositories.BookingRepository;
+import com.rspl.meal.Booking.Entites.Notification;
+import com.rspl.meal.Booking.Repositories.NotificationRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.time.*;
-import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 public class BookingService {
 
     private static final LocalTime CANCEL_CUTOFF_TIME = LocalTime.of(22, 0);
+    private static final LocalTime CUTOFF_TIME = LocalTime.of(20, 0); // 8 PM cutoff
+    private static final int BOOKING_PERIOD_MONTHS = 3;
+
     @Autowired
     private BookingRepository bookingRepository;
 
-    private static final LocalTime CUTOFF_TIME = LocalTime.of(20, 0); // 8 PM cutoff
-    private static final int BOOKING_PERIOD_MONTHS = 3;
-    public ResponseEntity<String> quickBookMeal(String userId, MealType mealType) {
+    @Autowired
+    private NotificationService notificationService;
 
+    @Autowired
+    private NotificationRepository notificationRepository;
+
+    public BookingService(BookingRepository bookingRepository, NotificationRepository notificationRepository) {
+        this.bookingRepository = bookingRepository;
+        this.notificationRepository = notificationRepository;
+    }
+
+    public ResponseEntity<String> quickBookMeal(String userId, MealType mealType) {
         if (!isBookingBeforeCutoffTime()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Quick Booking should be made before 8 PM");
         }
 
-
         LocalDate tomorrow = LocalDate.now().plusDays(1);
-
 
         if (isWeekend(tomorrow)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Quick booking cannot be done for weekends.");
         }
 
+        List<Booking> existingBookings = bookingRepository.findByUserIdAndStartDate(userId, tomorrow);
+        if (!existingBookings.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("User already has a booking for this date.");
+        }
 
-        return processSingleBooking(userId, mealType, tomorrow);
+        Booking booking = new Booking();
+        booking.setUserId(userId);
+        booking.setMealType(mealType);
+        booking.setStartDate(tomorrow);
+        booking.setEndDate(tomorrow);
+        booking.setStatus(BookingStatus.CONFIRMED);
+
+        Booking savedBooking = bookingRepository.save(booking);
+
+        if (savedBooking != null) {
+            String notificationMessage = "Quick booking successful for date: " + tomorrow;
+            Notification notification = new Notification();
+            notification.setUserId(userId);
+            notification.setMessage(notificationMessage);
+            notificationService.sendNotification(notification);
+            return ResponseEntity.ok(notificationMessage);
+        } else {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to create booking.");
+        }
     }
-
 
     public ResponseEntity<String> bookMeal(Map<String, Object> bookingDetails) {
         try {
@@ -59,23 +88,16 @@ public class BookingService {
             LocalDate startDate = LocalDate.parse(startDateStr);
             LocalDate endDate = bookingType.equalsIgnoreCase("bulk") ? LocalDate.parse(endDateStr) : startDate;
 
-
             if (!isBookingBeforeCutoffTime()) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Booking cannot be made after 8 PM.");
             }
 
-            System.out.println("Start Date: " + startDate);
-            System.out.println("End Date: " + endDate);
-
             if (isDateInvalid(startDate) || (bookingType.equalsIgnoreCase("bulk") && isDateInvalid(endDate))) {
-                System.out.println("Date Invalid Check Failed");
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid booking date.");
             }
 
             LocalDate tomorrow = LocalDate.now().plusDays(1);
             LocalDate maxBookingDate = tomorrow.plusMonths(BOOKING_PERIOD_MONTHS);
-
-            System.out.println("Max Booking Date: " + maxBookingDate);
 
             if (!isDateWithinRange(startDate, tomorrow, maxBookingDate) ||
                     (bookingType.equalsIgnoreCase("bulk") && !isDateWithinRange(endDate, tomorrow, maxBookingDate))) {
@@ -89,10 +111,6 @@ public class BookingService {
             } else {
                 return ResponseEntity.badRequest().body("Invalid booking type: " + bookingType);
             }
-        } catch (DateTimeParseException e) {
-            return ResponseEntity.badRequest().body("Invalid date format");
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body("Invalid meal type: " + e.getMessage());
         } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An error occurred");
@@ -104,22 +122,16 @@ public class BookingService {
     }
 
     private boolean isDateInvalid(LocalDate date) {
-        boolean result = date.isBefore(LocalDate.now().plusDays(1)) || isWeekend(date);
-        System.out.println("isDateInvalid: " + result);
-        return result;
+        return date.isBefore(LocalDate.now().plusDays(1)) || isWeekend(date);
     }
 
     private boolean isDateWithinRange(LocalDate date, LocalDate minDate, LocalDate maxDate) {
-        boolean result = !date.isBefore(minDate) && !date.isAfter(maxDate);
-        System.out.println("isDateWithinRange: " + result);
-        return result;
+        return !date.isBefore(minDate) && !date.isAfter(maxDate);
     }
 
     private boolean isWeekend(LocalDate date) {
         DayOfWeek day = date.getDayOfWeek();
-        boolean result = day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
-        System.out.println("isWeekend: " + result);
-        return result;
+        return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
     }
 
     private String extractUserId(Object userIdObj) {
@@ -131,88 +143,148 @@ public class BookingService {
 
     private ResponseEntity<String> processSingleBooking(String userId, MealType mealType, LocalDate date) {
         if (isDateInvalid(date)) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid Date ");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid Date");
         }
         if (hasBookingForDate(date, userId)) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("User already has a booking for this date.");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Booking already exists for date: " + date);
         }
-        Booking booking = createBooking(userId, mealType, date);
-        bookingRepository.save(booking);
-        return ResponseEntity.ok("Meal booked for " + date + ".");
+
+        Booking booking = createBooking(userId, mealType, date, date);
+        booking.setStatus(BookingStatus.CONFIRMED);
+        Booking savedBooking = bookingRepository.save(booking);
+
+        if (savedBooking != null) {
+            String message = "Booking created successfully for date: " + date;
+            sendNotification(userId, message);
+            return ResponseEntity.status(HttpStatus.CREATED).body(message);
+        } else {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to create booking.");
+        }
     }
 
     private ResponseEntity<String> processBulkBooking(String userId, LocalDate endDate, MealType mealType, LocalDate startDate) {
-        LocalDate date = startDate;
-        while (!date.isAfter(endDate)) {
-            if (isDateInvalid(date) || hasBookingForDate(date, userId)) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid booking date or user already has a booking for one of the dates in the range.");
-            }
-            if (!isWeekend(date)) { // Skip weekends
-                Booking booking = createBooking(userId, mealType, date);
-                bookingRepository.save(booking);
-            }
-            date = date.plusDays(1);
+        if (isDateInvalid(startDate) || isDateInvalid(endDate)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid Date");
         }
-        return ResponseEntity.ok("Meals booked from " + startDate + " to " + endDate + ".");
-    }
-
-
-    private Booking createBooking(String userId, MealType mealType, LocalDate date) {
-        Booking booking = new Booking();
-        booking.setStartDate(date);
-        booking.setEndDate(date);
-        booking.setUserId(userId);
-        booking.setMealType(mealType);
-        return booking;
-    }
-
-
-
-   public ResponseEntity<String> cancelBookings(List<Long> bookingIds) {
-        if (LocalDateTime.now().isAfter(LocalDateTime.of(LocalDate.now(), CANCEL_CUTOFF_TIME))) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Bookings cannot be cancelled after 10 PM.");
+        if (!startDate.isBefore(endDate)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Start date must be before end date.");
         }
 
-        for (Long bookingId : bookingIds) {
-            ResponseEntity<String> response = cancelBooking(bookingId);
-            if (response.getStatusCode() != HttpStatus.OK) {
-                return response;
+        List<Booking> bookings = new ArrayList<>();
+        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            if (isWeekend(date)) {
+                endDate = endDate.plusDays(1);  // Extend the end date by one day for every weekend date skipped
+                continue;
             }
+            if (hasBookingForDate(date, userId)) {
+                continue;
+            }
+            Booking booking = createBooking(userId, mealType, date, date);
+            booking.setStatus(BookingStatus.CONFIRMED);
+            bookings.add(booking);
         }
-        return ResponseEntity.ok("Bookings cancelled successfully.");
-    }
 
-    private ResponseEntity<String> cancelBooking(Long bookingId) {
-        Optional<Booking> optionalBooking = bookingRepository.findById(bookingId);
-        if (optionalBooking.isPresent()) {
-            bookingRepository.delete(optionalBooking.get());
-            return ResponseEntity.ok("Booking cancelled successfully.");
+        if (bookings.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No valid dates available for booking.");
+        }
+
+        List<Booking> savedBookings = bookingRepository.saveAll(bookings);
+        if (!savedBookings.isEmpty()) {
+            String message = "Bulk booking created successfully from " + startDate + " to " + endDate;
+            sendNotification(userId, message);
+            return ResponseEntity.status(HttpStatus.CREATED).body(message);
         } else {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Booking not found.");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to create bulk booking.");
         }
     }
 
     private boolean hasBookingForDate(LocalDate date, String userId) {
-        List<Booking> bookings = bookingRepository.findAll();
-        return bookings.stream().anyMatch(booking -> booking.getStartDate().equals(date) && booking.getUserId().equals(userId));
+        List<Booking> existingBookings = bookingRepository.findByUserIdAndStartDate(userId, date);
+        return existingBookings != null && !existingBookings.isEmpty();
     }
 
-    public List<Booking> getAllBookings() {
-        return bookingRepository.findAll();
+    private Booking createBooking(String userId, MealType mealType, LocalDate startDate, LocalDate endDate) {
+        Booking booking = new Booking();
+        booking.setUserId(userId);
+        booking.setMealType(mealType);
+        booking.setStartDate(startDate);
+        booking.setEndDate(endDate);
+        booking.setStatus(BookingStatus.CONFIRMED);
+        return booking;
     }
 
-    // Method to fetch bookings by user ID
-//    public List<Booking> getBookingsByUserId(String userId) {
-//        return bookingRepository.findByUserId(userId);
-//    }
-//
-//    // Method to fetch bookings by meal type
-//    public List<Booking> getBookingsByMealType(MealType mealType) {
-//        return bookingRepository.findByMealType(mealType);
-//    }
+    private void sendNotification(String userId, String message) {
+        Notification notification = new Notification();
+        notification.setUserId(userId);
+        notification.setMessage(message);
+        notificationService.sendNotification(notification);
+    }
 
-    // Method to fetch bookings by date range
-    public List<Booking> getBookingsByDateRange(LocalDate startDate, LocalDate endDate) {
-        return bookingRepository.findByStartDateBetween(startDate, endDate);
+    public ResponseEntity<String> cancelBookings(List<Long> bookingIds) {
+        // Check if cancellation is allowed based on the current time
+        if (!isCancellationAllowed()) {
+            return ResponseEntity.badRequest().body("Cancellation is not allowed after 10 PM.");
+        }
+
+        List<Notification> notifications = new ArrayList<>();
+
+        try {
+            for (Long bookingId : bookingIds) {
+                Booking booking = bookingRepository.findById(bookingId)
+                        .orElseThrow(() -> new IllegalArgumentException("Booking not found with ID: " + bookingId));
+
+                // Update the booking status to cancelled
+                booking.setStatus(BookingStatus.CANCELED);
+                bookingRepository.save(booking);
+
+                // Create a notification for each cancelled booking
+                Notification notification = new Notification();
+                notification.setMessage("Booking with ID " + bookingId + " cancelled successfully.");
+                notificationRepository.save(notification);
+                notifications.add(notification);
+            }
+
+            return ResponseEntity.ok("Bookings cancelled successfully.");
+        } catch (Exception e) {
+            // Rollback the status update and notification creation if any error occurs
+            for (Notification notification : notifications) {
+                notificationRepository.delete(notification);
+            }
+            return ResponseEntity.badRequest().body("Failed to cancel bookings. Please try again later.");
+        }
+    }
+
+    public ResponseEntity<String> cancelBooking(Long bookingId) {
+        // Check if cancellation is allowed based on the current time
+        if (!isCancellationAllowed()) {
+            return ResponseEntity.badRequest().body("Cancellation is not allowed after 10 PM.");
+        }
+
+        try {
+            Booking booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new IllegalArgumentException("Booking not found with ID: " + bookingId));
+
+            // Update the booking status to cancelled
+            booking.setStatus(BookingStatus.CANCELED);
+            bookingRepository.save(booking);
+
+            // Create a notification for the cancelled booking
+            Notification notification = new Notification();
+            notification.setMessage("Booking with ID " + bookingId + " cancelled successfully.");
+            notificationRepository.save(notification);
+
+            return ResponseEntity.ok("Booking with Booking ID " + bookingId + " cancelled successfully.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Failed to cancel booking with ID " + bookingId + ". Please try again later.");
+        }
+    }
+
+    private boolean isCancellationAllowed() {
+        LocalTime currentTime = LocalTime.now();
+        return currentTime.isBefore(LocalTime.of(22, 0));
+    }
+
+    public List<Booking> getBookingsByUserId(String userId) {
+        return bookingRepository.findByUserId(userId);
     }
 }
