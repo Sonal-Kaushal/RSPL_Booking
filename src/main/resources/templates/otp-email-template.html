@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>OTP Email</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+        .email-container {
+            background-color: #ffffff;
+            border: 1px solid #dddddd;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+            text-align: center;
+        }
+        .content {
+            padding: 20px;
+        }
+        .otp {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        .footer {
+            background-color: #f1f1f1;
+            text-align: center;
+            padding: 10px;
+            font-size: 12px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+<div class="email-container">
+    <div class="header">
+        <h1>Your OTP Code to Reset Password</h1>
+    </div>
+    <div class="content">
+        <p>Dear <span th:text="${name}">User</span>,</p>
+        <p>Your OTP code is:</p>
+        <p class="otp" th:text="${otp}">123456</p>
+        <p>Please use this code to reset your password. This code is valid for 5 minutes.</p>
+        <p>Best Regards,</p>
+        <p>Rishabh Software</p>
+    </div>
+    <div class="footer">
+        <p>&copy; 2024 Rishabh Software. All rights reserved.</p>
+    </div>
+</div>
+</body>
+</html>
