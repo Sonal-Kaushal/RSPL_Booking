@@ -27,6 +27,7 @@ public class CouponController {
             response.put("couponId", coupon.getCouponId());
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (Exception e) {
+            e.printStackTrace();
             Map<String, String> errorResponse = new HashMap<>();
             errorResponse.put("error", "Failed to generate coupon. Please try again later.");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);

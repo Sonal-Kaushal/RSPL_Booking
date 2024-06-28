@@ -22,9 +22,9 @@ public class NotificationController {
         return ResponseEntity.status(HttpStatus.CREATED).body(savedNotification);
     }
 
-    @GetMapping("/{userId}")
-    public ResponseEntity<List<Notification>> getNotificationsByUserId(@PathVariable String userId) {
-        List<Notification> notifications = notificationService.getNotificationsByUserId(userId);
+    @GetMapping("/{bookingId}")
+    public ResponseEntity<List<Notification>> getNotificationsByEmployeeId(@PathVariable Long bookingId) {
+        List<Notification> notifications = notificationService.getNotificationsByEmployeeId(bookingId);
         return ResponseEntity.ok(notifications);
     }
 

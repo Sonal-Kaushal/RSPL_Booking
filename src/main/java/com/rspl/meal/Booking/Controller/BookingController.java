@@ -1,6 +1,7 @@
 package com.rspl.meal.Booking.Controller;
 
-import com.rspl.meal.Booking.Entites.Booking;
+import com.rspl.meal.Booking.dto.BookingDTO;
+import com.rspl.meal.Booking.dto.BookingDto;
 import com.rspl.meal.Booking.enums.MealType;
 import com.rspl.meal.Booking.Services.BookingService;
 import com.rspl.meal.Booking.Services.NotificationService;
@@ -23,9 +24,8 @@ public class BookingController {
     private NotificationService notificationService;
 
     @PostMapping("/quick")
-    public ResponseEntity<String> quickBookMeal(@RequestParam String userId,
-                                                @RequestParam MealType mealType) {
-        ResponseEntity<String> response = bookingService.quickBookMeal(userId, mealType);
+    public ResponseEntity<String> quickBookMeal(@RequestParam MealType mealType) {
+        ResponseEntity<String> response = bookingService.quickBookMeal(mealType);
         return handleBookingResponse(response);
     }
 
@@ -41,9 +41,9 @@ public class BookingController {
         return handleCancellationResponse(response);
     }
 
-    @GetMapping("/user/{userId}")
-    public ResponseEntity<List<Booking>> getBookingsByUserId(@PathVariable String userId) {
-        List<Booking> bookings = bookingService.getBookingsByUserId(userId);
+    @GetMapping("/user/{employeeId}")
+    public ResponseEntity<List<BookingDto>> getBookingsByEmployeeId(@PathVariable Long employeeId) {
+        List<BookingDto> bookings = bookingService.getBookingsByEmployeeId(employeeId);
         return ResponseEntity.ok(bookings);
     }
 
@@ -70,7 +70,4 @@ public class BookingController {
             return ResponseEntity.status(response.getStatusCode()).body(response.getBody());
         }
     }
-
-
-
 }

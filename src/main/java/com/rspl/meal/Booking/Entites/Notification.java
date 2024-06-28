@@ -1,20 +1,20 @@
 package com.rspl.meal.Booking.Entites;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
 
 @Entity
+
 public class Notification {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String userId;
+    @ManyToOne
+    @JoinColumn(name = "employee_id")
+    private Employee employee;
+
     private String message;
-//    private boolean read;
 
     // Getters and setters
 
@@ -26,12 +26,12 @@ public class Notification {
         this.id = id;
     }
 
-    public String getUserId() {
-        return userId;
+    public Employee getEmployee() {
+        return employee;
     }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
+    public void setEmployee(Employee employee) {
+        this.employee = employee;
     }
 
     public String getMessage() {
@@ -39,8 +39,11 @@ public class Notification {
     }
 
     public void setMessage(String message) {
-        this.message = message;
+
     }
 
-
+    public void setEmployeeId(Long employeeId) {
+    }
 }
+
+

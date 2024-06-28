@@ -3,12 +3,16 @@ package com.rspl.meal.Booking.Entites;
 import com.rspl.meal.Booking.enums.BookingStatus;
 import com.rspl.meal.Booking.enums.MealType;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 
 @Data
 @Entity
+@AllArgsConstructor
+//@NoArgsConstructor
 public class Booking {
 
     @Id
@@ -16,7 +20,10 @@ public class Booking {
     @Column(name = "booking_id")
     private Long bookingId;
 
-    private String userId;
+    @ManyToOne
+    @JoinColumn(name = "employee_id")
+    private Employee employee;
+
     private MealType mealType;
     private LocalDate startDate;
     private LocalDate endDate;
@@ -26,6 +33,21 @@ public class Booking {
 
     @OneToOne(mappedBy = "booking", cascade = CascadeType.ALL)
     private Coupon coupon;
+
+    // Constructors
+
+    public Booking() {
+    }
+
+    public Booking(Employee employee, MealType mealType, LocalDate startDate, LocalDate endDate, BookingStatus status) {
+        this.employee = employee;
+        this.mealType = mealType;
+        this.startDate = startDate;
+        this.endDate = endDate;
+        this.status = status;
+    }
+
+    // Getters and Setters
 
     public Long getBookingId() {
         return bookingId;
@@ -75,22 +97,21 @@ public class Booking {
         this.status = status;
     }
 
-    public String getUserId() {
-        return userId;
+    public Employee getEmployee() {
+        return employee;
     }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
+    public void setEmployee(Employee employee) {
+        this.employee = employee;
     }
 
-    public Booking(){}
-    public Booking(Long bookingId, Coupon coupon, LocalDate endDate, MealType mealType, LocalDate startDate, BookingStatus status, String userId) {
-        this.bookingId = bookingId;
-        this.coupon = coupon;
-        this.endDate = endDate;
-        this.mealType = mealType;
-        this.startDate = startDate;
-        this.status = status;
-        this.userId = userId;
+    public void setEmployeeId(Long employeeId) {
+
     }
+
+    public Long getEmployeeId() {
+        return null;
+    }
+
+
 }

@@ -44,7 +44,7 @@ public class CouponService {
             newCoupon.setExpirationTime(LocalDateTime.now().plusMinutes(1)); // Set expiration time
             newCoupon.setBooking(booking);
             booking.setCoupon(newCoupon);
-            bookingRepository.save(booking);
+//            bookingRepository.save(booking);
             return couponRepository.save(newCoupon);
         }
     }

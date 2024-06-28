@@ -1,22 +1,37 @@
 package com.rspl.meal.Booking.Services;
 
+import com.rspl.meal.Booking.dto.*;
 import com.rspl.meal.Booking.Entites.Booking;
-import com.rspl.meal.Booking.enums.MealType;
-import com.rspl.meal.Booking.enums.BookingStatus;
-import com.rspl.meal.Booking.Repositories.BookingRepository;
+import com.rspl.meal.Booking.Entites.Employee;
 import com.rspl.meal.Booking.Entites.Notification;
+import com.rspl.meal.Booking.enums.BookingStatus;
+import com.rspl.meal.Booking.enums.MealType;
+import com.rspl.meal.Booking.Repositories.BookingRepository;
+import com.rspl.meal.Booking.Repositories.EmployeeRepository;
 import com.rspl.meal.Booking.Repositories.NotificationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-import java.time.*;
-import java.util.*;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class BookingService {
 
+    private static final Logger logger = LoggerFactory.getLogger(BookingService.class);
     private static final LocalTime CANCEL_CUTOFF_TIME = LocalTime.of(22, 0);
     private static final LocalTime CUTOFF_TIME = LocalTime.of(20, 0); // 8 PM cutoff
     private static final int BOOKING_PERIOD_MONTHS = 3;
@@ -30,12 +45,17 @@ public class BookingService {
     @Autowired
     private NotificationRepository notificationRepository;
 
+    @Autowired
+    private EmployeeRepository employeeRepository;
+
     public BookingService(BookingRepository bookingRepository, NotificationRepository notificationRepository) {
         this.bookingRepository = bookingRepository;
         this.notificationRepository = notificationRepository;
     }
 
-    public ResponseEntity<String> quickBookMeal(String userId, MealType mealType) {
+    public ResponseEntity<String> quickBookMeal(MealType mealType) {
+        LoggedInUserDTO loggedInUser = getLoggedInUser();
+        Long employeeId = loggedInUser.getId();
         if (!isBookingBeforeCutoffTime()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Quick Booking should be made before 8 PM");
         }
@@ -45,14 +65,22 @@ public class BookingService {
         if (isWeekend(tomorrow)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Quick booking cannot be done for weekends.");
         }
+        if (employeeId == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Employee ID cannot be null.");
+        }
 
-        List<Booking> existingBookings = bookingRepository.findByUserIdAndStartDate(userId, tomorrow);
+        Employee employee = employeeRepository.findById(employeeId).orElse(null);
+        if (employee == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Employee not found.");
+        }
+
+        List<Booking> existingBookings = bookingRepository.findByEmployeeAndStartDate(employee, tomorrow);
         if (!existingBookings.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("User already has a booking for this date.");
         }
 
         Booking booking = new Booking();
-        booking.setUserId(userId);
+        booking.setEmployeeId(employeeId);
         booking.setMealType(mealType);
         booking.setStartDate(tomorrow);
         booking.setEndDate(tomorrow);
@@ -62,8 +90,8 @@ public class BookingService {
 
         if (savedBooking != null) {
             String notificationMessage = "Quick booking successful for date: " + tomorrow;
-            Notification notification = new Notification();
-            notification.setUserId(userId);
+            NotificationDto notification = new NotificationDto();
+            notification.setEmployeeId(employeeId);
             notification.setMessage(notificationMessage);
             notificationService.sendNotification(notification);
             return ResponseEntity.ok(notificationMessage);
@@ -75,15 +103,16 @@ public class BookingService {
     public ResponseEntity<String> bookMeal(Map<String, Object> bookingDetails) {
         try {
             String bookingType = (String) bookingDetails.get("bookingType");
-            String userId = extractUserId(bookingDetails.get("userId"));
             String endDateStr = (String) bookingDetails.get("endDate");
             String mealCategory = (String) bookingDetails.get("mealType");
             String startDateStr = (String) bookingDetails.get("startDate");
 
-            if (bookingType == null || userId == null || mealCategory == null || startDateStr == null) {
+            if (bookingType == null || mealCategory == null || startDateStr == null) {
                 return ResponseEntity.badRequest().body("Booking details are incomplete");
             }
 
+            LoggedInUserDTO loggedInUser = getLoggedInUser();
+            Long employeeId = loggedInUser.getId();
             MealType mealType = MealType.valueOf(mealCategory.toUpperCase());
             LocalDate startDate = LocalDate.parse(startDateStr);
             LocalDate endDate = bookingType.equalsIgnoreCase("bulk") ? LocalDate.parse(endDateStr) : startDate;
@@ -105,9 +134,9 @@ public class BookingService {
             }
 
             if (bookingType.equalsIgnoreCase("single")) {
-                return processSingleBooking(userId, mealType, startDate);
+                return processSingleBooking(employeeId, mealType, startDate);
             } else if (bookingType.equalsIgnoreCase("bulk")) {
-                return processBulkBooking(userId, endDate, mealType, startDate);
+                return processBulkBooking(employeeId, endDate, mealType, startDate);
             } else {
                 return ResponseEntity.badRequest().body("Invalid booking type: " + bookingType);
             }
@@ -134,35 +163,28 @@ public class BookingService {
         return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
     }
 
-    private String extractUserId(Object userIdObj) {
-        if (userIdObj == null) {
-            return null;
-        }
-        return userIdObj instanceof String ? (String) userIdObj : String.valueOf(userIdObj);
-    }
-
-    private ResponseEntity<String> processSingleBooking(String userId, MealType mealType, LocalDate date) {
+    private ResponseEntity<String> processSingleBooking(Long employeeId, MealType mealType, LocalDate date) {
         if (isDateInvalid(date)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid Date");
         }
-        if (hasBookingForDate(date, userId)) {
+        if (hasBookingForDate(date, employeeId)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Booking already exists for date: " + date);
         }
 
-        Booking booking = createBooking(userId, mealType, date, date);
+        Booking booking = createBooking(employeeId, mealType, date, date);
         booking.setStatus(BookingStatus.CONFIRMED);
         Booking savedBooking = bookingRepository.save(booking);
 
         if (savedBooking != null) {
             String message = "Booking created successfully for date: " + date;
-            sendNotification(userId, message);
+            sendNotification(employeeId, message);
             return ResponseEntity.status(HttpStatus.CREATED).body(message);
         } else {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to create booking.");
         }
     }
 
-    private ResponseEntity<String> processBulkBooking(String userId, LocalDate endDate, MealType mealType, LocalDate startDate) {
+    private ResponseEntity<String> processBulkBooking(Long employeeId, LocalDate endDate, MealType mealType, LocalDate startDate) {
         if (isDateInvalid(startDate) || isDateInvalid(endDate)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid Date");
         }
@@ -171,41 +193,28 @@ public class BookingService {
         }
 
         List<Booking> bookings = new ArrayList<>();
-        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
-            if (isWeekend(date)) {
-                endDate = endDate.plusDays(1);  // Extend the end date by one day for every weekend date skipped
-                continue;
+        LocalDate date = startDate;
+        while (!date.isAfter(endDate)) {
+            if (!isWeekend(date) && !hasBookingForDate(date, employeeId)) {
+                bookings.add(createBooking(employeeId, mealType, date, date));
             }
-            if (hasBookingForDate(date, userId)) {
-                continue;
-            }
-            Booking booking = createBooking(userId, mealType, date, date);
-            booking.setStatus(BookingStatus.CONFIRMED);
-            bookings.add(booking);
+            date = date.plusDays(1);
         }
 
-        if (bookings.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No valid dates available for booking.");
-        }
-
-        List<Booking> savedBookings = bookingRepository.saveAll(bookings);
-        if (!savedBookings.isEmpty()) {
-            String message = "Bulk booking created successfully from " + startDate + " to " + endDate;
-            sendNotification(userId, message);
-            return ResponseEntity.status(HttpStatus.CREATED).body(message);
-        } else {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to create bulk booking.");
-        }
+        bookingRepository.saveAll(bookings);
+        String message = "Bulk booking created successfully from " + startDate + " to " + endDate;
+        sendNotification(employeeId, message);
+        return ResponseEntity.status(HttpStatus.CREATED).body(message);
     }
 
-    private boolean hasBookingForDate(LocalDate date, String userId) {
-        List<Booking> existingBookings = bookingRepository.findByUserIdAndStartDate(userId, date);
-        return existingBookings != null && !existingBookings.isEmpty();
+    private boolean hasBookingForDate(LocalDate date, Long employeeId) {
+        Employee employee = employeeRepository.findById(employeeId).orElse(null);
+        return employee != null && !bookingRepository.findByEmployeeAndStartDate(employee, date).isEmpty();
     }
 
-    private Booking createBooking(String userId, MealType mealType, LocalDate startDate, LocalDate endDate) {
+    private Booking createBooking(Long employeeId, MealType mealType, LocalDate startDate, LocalDate endDate) {
         Booking booking = new Booking();
-        booking.setUserId(userId);
+        booking.setEmployeeId(employeeId);
         booking.setMealType(mealType);
         booking.setStartDate(startDate);
         booking.setEndDate(endDate);
@@ -213,78 +222,87 @@ public class BookingService {
         return booking;
     }
 
-    private void sendNotification(String userId, String message) {
-        Notification notification = new Notification();
-        notification.setUserId(userId);
+    private void sendNotification(Long employeeId, String message) {
+        NotificationDto notification = new NotificationDto();
+        notification.setEmployeeId(employeeId);
         notification.setMessage(message);
         notificationService.sendNotification(notification);
     }
 
-    public ResponseEntity<String> cancelBookings(List<Long> bookingIds) {
-        // Check if cancellation is allowed based on the current time
-        if (!isCancellationAllowed()) {
-            return ResponseEntity.badRequest().body("Cancellation is not allowed after 10 PM.");
+    public List<BookingDto> getUserBookingsForNextThreeMonths(Long employeeId) {
+        LocalDate today = LocalDate.now();
+        LocalDate threeMonthsLater = today.plusMonths(3);
+
+        Employee employee = employeeRepository.findById(employeeId).orElse(null);
+        if (employee == null) {
+            throw new RuntimeException("Employee not found");
         }
 
-        List<Notification> notifications = new ArrayList<>();
+        List<Booking> bookings = bookingRepository.findByEmployeeAndStartDateBetween(employee, today, threeMonthsLater);
+        return bookings.stream()
+                .map(this::convertToBookingDTO)
+                .collect(Collectors.toList());
+    }
 
-        try {
-            for (Long bookingId : bookingIds) {
-                Booking booking = bookingRepository.findById(bookingId)
-                        .orElseThrow(() -> new IllegalArgumentException("Booking not found with ID: " + bookingId));
+    public List<BookingDto> getUserBookingsByMealType(Long employeeId, MealType mealType) {
+        Employee employee = employeeRepository.findById(employeeId).orElse(null);
+        if (employee == null) {
+            throw new RuntimeException("Employee not found");
+        }
 
-                // Update the booking status to cancelled
-                booking.setStatus(BookingStatus.CANCELED);
-                bookingRepository.save(booking);
+        List<Booking> bookings = bookingRepository.findByEmployeeAndMealType(employee, mealType);
+        return bookings.stream()
+                .map(this::convertToBookingDTO
+                )
+                .collect(Collectors.toList());
+    }
 
-                // Create a notification for each cancelled booking
-                Notification notification = new Notification();
-                notification.setMessage("Booking with ID " + bookingId + " cancelled successfully.");
-                notificationRepository.save(notification);
-                notifications.add(notification);
+    public ResponseEntity<String> cancelMealBooking(Long bookingId) {
+        Booking booking = bookingRepository.findById(bookingId).orElse(null);
+        if (booking == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Booking not found.");
+        }
+
+        if (!isCancelAllowed(booking.getStartDate())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Cancellation not allowed after 10 PM.");
+        }
+
+        booking.setStatus(BookingStatus.CANCELLED);
+        bookingRepository.save(booking);
+        String message = "Booking cancelled successfully.";
+        sendNotification(booking.getEmployeeId(), message);
+        return ResponseEntity.ok(message);
+    }
+
+    private boolean isCancelAllowed(LocalDate startDate) {
+        return LocalTime.now().isBefore(CANCEL_CUTOFF_TIME) || !startDate.equals(LocalDate.now().plusDays(1));
+    }
+
+    private BookingDto convertToBookingDTO(Booking booking) {
+        BookingDto bookingDTO = new BookingDto();
+        bookingDTO.setId(booking.getEmployeeId());
+        bookingDTO.setEmployeeId(booking.getEmployeeId());
+        bookingDTO.setMealType(booking.getMealType());
+        bookingDTO.setStartDate(booking.getStartDate());
+        bookingDTO.setEndDate(booking.getEndDate());
+        bookingDTO.setStatus(booking.getStatus());
+        return bookingDTO;
+    }
+
+    private LoggedInUserDTO getLoggedInUser() {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (principal instanceof UserDetails) {
+            String email = ((UserDetails) principal).getUsername();
+            Employee employee = employeeRepository.findByEmail(email);
+            if (employee != null) {
+                return new LoggedInUserDTO(employee.getId(), employee.getEmail(), employee.getName());
+            } else {
+                throw new UsernameNotFoundException("User not found with email: " + email);
             }
-
-            return ResponseEntity.ok("Bookings cancelled successfully.");
-        } catch (Exception e) {
-            // Rollback the status update and notification creation if any error occurs
-            for (Notification notification : notifications) {
-                notificationRepository.delete(notification);
-            }
-            return ResponseEntity.badRequest().body("Failed to cancel bookings. Please try again later.");
+        } else {
+            throw new AuthenticationCredentialsNotFoundException("User not authenticated");
         }
     }
 
-    public ResponseEntity<String> cancelBooking(Long bookingId) {
-        // Check if cancellation is allowed based on the current time
-        if (!isCancellationAllowed()) {
-            return ResponseEntity.badRequest().body("Cancellation is not allowed after 10 PM.");
-        }
 
-        try {
-            Booking booking = bookingRepository.findById(bookingId)
-                    .orElseThrow(() -> new IllegalArgumentException("Booking not found with ID: " + bookingId));
-
-            // Update the booking status to cancelled
-            booking.setStatus(BookingStatus.CANCELED);
-            bookingRepository.save(booking);
-
-            // Create a notification for the cancelled booking
-            Notification notification = new Notification();
-            notification.setMessage("Booking with ID " + bookingId + " cancelled successfully.");
-            notificationRepository.save(notification);
-
-            return ResponseEntity.ok("Booking with Booking ID " + bookingId + " cancelled successfully.");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Failed to cancel booking with ID " + bookingId + ". Please try again later.");
-        }
-    }
-
-    private boolean isCancellationAllowed() {
-        LocalTime currentTime = LocalTime.now();
-        return currentTime.isBefore(LocalTime.of(22, 0));
-    }
-
-    public List<Booking> getBookingsByUserId(String userId) {
-        return bookingRepository.findByUserId(userId);
-    }
 }
